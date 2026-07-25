@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-bg-primary: #0B0E11;
+  --color-bg-secondary: #1E2329;
+  --color-bg-tertiary: #2B3139;
+  --color-accent: #F0B90B;
+  --color-accent-green: #0ECB81;
+  --color-accent-red: #F6465D;
+  --color-text-primary: #EAECEF;
+  --color-text-secondary: #848E9C;
+  --color-border: #2B3139;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+#root {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* Скроллбар в стиле трейдинга */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-bg-primary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-bg-tertiary);
+  border-radius: 2px;
+}
+
+/* Анимация пульса для кнопки зарплаты */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(240, 185, 11, 0.3); }
+  50% { box-shadow: 0 0 20px rgba(240, 185, 11, 0.6); }
+}
+
+.pulse-glow {
+  animation: pulse-glow 2s infinite;
+}
