@@ -1,20 +1,20 @@
 import { useState } from 'react';
 import {
   PencilIcon, CheckIcon, ClockIcon, XMarkIcon,
-  ExclamationTriangleIcon, ShieldCheckIcon, PlusCircleIcon,
+  ExclamationTriangleIcon, ShieldCheckIcon, PlusCircleIcon, BellIcon,
 } from '@heroicons/react/24/outline';
 import type { UserData, Spending } from '../types';
 import { todayStr, formatDate } from '../utils';
+import { useNotifications } from '../hooks/useNotifications';
 
 interface Props {
   data: UserData;
   updateData: (d: Partial<UserData>) => void;
 }
 
-// Расширяем UserData
 interface ExtendedData extends UserData {
-  safetyFund?: number;      // подушка безопасности
-  lastSalaryDate?: string;  // дата последней зарплаты
+  safetyFund?: number;
+  lastSalaryDate?: string;
 }
 
 export default function Dashboard({ data, updateData }: Props) {
@@ -36,26 +36,22 @@ export default function Dashboard({ data, updateData }: Props) {
   const [eiSafety, setEiSafety] = useState(30);
   const [eiBudget, setEiBudget] = useState(20);
 
-  // ─── Константы ───────────────────────────────────────
-  const SAFETY_GOAL = d.salary; // цель подушки = 1 зарплата
-  const SAFETY_PERCENT = 10;    // % от свободных в подушку
+  const SAFETY_GOAL = d.salary;
+  const SAFETY_PERCENT = 10;
   const today = todayStr();
   const now = new Date();
 
-  // ─── Расчёты ─────────────────────────────────────────
   const totalExpenses = d.categories.reduce((s, c) => s + c.amount, 0);
   const freeMoney = d.salary - totalExpenses;
   const safetyFund = d.safetyFund || 0;
   const safetyNeeded = Math.max(0, SAFETY_GOAL - safetyFund);
   const safetyContribution = safetyNeeded > 0 ? Math.round(freeMoney * (SAFETY_PERCENT / 100)) : 0;
 
-  // Если подушка полная — эти деньги идут в мечту
   const effectiveToGoal = Math.round(freeMoney * (d.percentToGoal / 100));
   const toGoal = effectiveToGoal + (safetyNeeded === 0 ? safetyContribution : 0);
   const toSafety = safetyNeeded > 0 ? safetyContribution : 0;
   const monthBudget = Math.max(0, freeMoney - effectiveToGoal - toSafety);
 
-  // Период 30 дней от последней зарплаты
   const lastSalary = d.lastSalaryDate || d.salaryHistory?.sort((a, b) => b.date.localeCompare(a.date))[0]?.date;
   const periodStart = lastSalary ? new Date(lastSalary) : new Date(now.getFullYear(), now.getMonth(), 1);
   const daysTotal = 30;
@@ -63,7 +59,6 @@ export default function Dashboard({ data, updateData }: Props) {
   const daysLeft = Math.max(1, daysTotal - daysPassed + 1);
   const periodStartStr = periodStart.toISOString().slice(0, 10);
 
-  // Траты за период
   const periodSpendings = (d.spendings || []).filter(s => s.date >= periodStartStr);
   const regularSpent = periodSpendings.filter(s => !s.category?.includes('форс-мажор')).reduce((sum, s) => sum + s.amount, 0);
   const fmSpent = periodSpendings.filter(s => s.category?.includes('форс-мажор')).reduce((sum, s) => sum + s.amount, 0);
@@ -74,8 +69,8 @@ export default function Dashboard({ data, updateData }: Props) {
   const monthsDelayed = toGoal > 0 && fmSpent > 0 ? Math.ceil(fmSpent / toGoal) : 0;
   const safetyPercent = SAFETY_GOAL > 0 ? (safetyFund / SAFETY_GOAL) * 100 : 100;
 
-  // ─── Обработчики ─────────────────────────────────────
   const update = (partial: Partial<ExtendedData>) => updateData(partial as Partial<UserData>);
+  const { permission, scheduled, requestPermission, scheduleDailyReminder, sendTestNotification } = useNotifications();
 
   const handleSalary = () => {
     if (freeMoney <= 0) return;
@@ -108,8 +103,8 @@ export default function Dashboard({ data, updateData }: Props) {
   const addSpending = () => {
     const amount = +newSpendingAmount;
     if (!newSpendingDesc.trim() || amount <= 0) return;
-    const warning = amount > dailyLimit ? `⚠️ На ${(amount - dailyLimit).toLocaleString('ru-RU')} ₽ больше дневного лимита` : '';
-    const sp: Spending = { id: Date.now().toString(), amount, description: newSpendingDesc.trim() + (warning ? ` (${warning})` : ''), category: 'трата', date: today };
+    const warning = amount > dailyLimit ? ` ⚠️ На ${(amount - dailyLimit).toLocaleString('ru-RU')} ₽ больше дневного лимита` : '';
+    const sp: Spending = { id: Date.now().toString(), amount, description: newSpendingDesc.trim() + warning, category: 'трата', date: today };
     update({ spendings: [...(d.spendings || []), sp] });
     setNewSpendingDesc(''); setNewSpendingAmount('');
   };
@@ -117,67 +112,33 @@ export default function Dashboard({ data, updateData }: Props) {
   const addForceMajeure = () => {
     const amount = +fmAmount;
     if (!fmDesc.trim() || amount <= 0) return;
-
-    let fromSafety = 0;
-    let fromDream = 0;
-    let remaining = amount;
-
-    // Сначала из подушки
-    if (safetyFund > 0) {
-      fromSafety = Math.min(safetyFund, remaining);
-      remaining -= fromSafety;
-    }
-    // Потом из мечты
-    if (remaining > 0) {
-      fromDream = Math.min(d.saved, remaining);
-      remaining -= fromDream;
-    }
-
+    let fromSafety = 0, fromDream = 0, remaining = amount;
+    if (safetyFund > 0) { fromSafety = Math.min(safetyFund, remaining); remaining -= fromSafety; }
+    if (remaining > 0) { fromDream = Math.min(d.saved, remaining); remaining -= fromDream; }
     const parts: string[] = [];
     if (fromSafety > 0) parts.push(`из подушки ${fromSafety.toLocaleString('ru-RU')} ₽`);
     if (fromDream > 0) parts.push(`из мечты ${fromDream.toLocaleString('ru-RU')} ₽`);
-
     const sp: Spending = {
-      id: Date.now().toString(),
-      amount,
+      id: Date.now().toString(), amount,
       description: `🚨 ${fmDesc.trim()} (${parts.join(', ')})${remaining > 0 ? ` ⚠️ Не хватило ${remaining.toLocaleString('ru-RU')} ₽` : ''}`,
-      category: 'форс-мажор',
-      date: today,
+      category: 'форс-мажор', date: today,
     };
-
-    update({
-      safetyFund: safetyFund - fromSafety,
-      saved: d.saved - fromDream,
-      spendings: [...(d.spendings || []), sp],
-    });
-
+    update({ safetyFund: safetyFund - fromSafety, saved: d.saved - fromDream, spendings: [...(d.spendings || []), sp] });
     setFmDesc(''); setFmAmount(''); setShowForceMajeure(false);
   };
 
   const addExtraIncome = () => {
     const amount = +eiAmount;
     if (!eiDesc.trim() || amount <= 0) return;
-
     const toDream = Math.round(amount * (eiDream / 100));
     const toSafety = Math.round(amount * (eiSafety / 100));
     const toBudget = amount - toDream - toSafety;
-
     const sp: Spending = {
-      id: Date.now().toString(),
-      amount,
+      id: Date.now().toString(), amount,
       description: `💎 ${eiDesc.trim()} (мечта: +${toDream.toLocaleString('ru-RU')} ₽, подушка: +${toSafety.toLocaleString('ru-RU')} ₽, бюджет: +${toBudget.toLocaleString('ru-RU')} ₽)`,
-      category: 'доп.доход',
-      date: today,
+      category: 'доп.доход', date: today,
     };
-
-    update({
-      saved: d.saved + toDream,
-      safetyFund: safetyFund + toSafety,
-      spendings: [...(d.spendings || []), sp],
-      // бюджет увеличиваем через корректировку
-      salary: d.salary + toBudget, // временно увеличиваем зарплату для этого месяца
-    });
-
+    update({ saved: d.saved + toDream, safetyFund: safetyFund + toSafety, spendings: [...(d.spendings || []), sp], salary: d.salary + toBudget });
     setEiDesc(''); setEiAmount(''); setShowExtraIncome(false);
   };
 
@@ -185,34 +146,27 @@ export default function Dashboard({ data, updateData }: Props) {
     const sp = (d.spendings || []).find(s => s.id === id);
     if (!sp) return;
     let updated: Partial<ExtendedData> = { spendings: (d.spendings || []).filter(s => s.id !== id) };
-
     if (sp.category?.includes('форс-мажор')) {
-      // Возвращаем деньги
       const desc = sp.description;
-      const fromSafety = desc.match(/из подушки ([\d\s]+) ₽/);
-      const fromDream = desc.match(/из мечты ([\d\s]+) ₽/);
-      if (fromSafety) updated.safetyFund = safetyFund + parseInt(fromSafety[1].replace(/\s/g, ''));
-      if (fromDream) updated.saved = d.saved + parseInt(fromDream[1].replace(/\s/g, ''));
+      const m1 = desc.match(/из подушки ([\d\s]+) ₽/);
+      const m2 = desc.match(/из мечты ([\d\s]+) ₽/);
+      if (m1) updated.safetyFund = safetyFund + parseInt(m1[1].replace(/\s/g, ''));
+      if (m2) updated.saved = d.saved + parseInt(m2[1].replace(/\s/g, ''));
     } else if (sp.category === 'доп.доход') {
-      // Возвращаем распределение доп.дохода
       const desc = sp.description;
-      const dreamMatch = desc.match(/мечта: \+([\d\s]+) ₽/);
-      const safetyMatch = desc.match(/подушка: \+([\d\s]+) ₽/);
-      const budgetMatch = desc.match(/бюджет: \+([\d\s]+) ₽/);
-      if (dreamMatch) updated.saved = d.saved - parseInt(dreamMatch[1].replace(/\s/g, ''));
-      if (safetyMatch) updated.safetyFund = safetyFund - parseInt(safetyMatch[1].replace(/\s/g, ''));
-      if (budgetMatch) updated.salary = d.salary - parseInt(budgetMatch[1].replace(/\s/g, ''));
+      const m1 = desc.match(/мечта: \+([\d\s]+) ₽/);
+      const m2 = desc.match(/подушка: \+([\d\s]+) ₽/);
+      const m3 = desc.match(/бюджет: \+([\d\s]+) ₽/);
+      if (m1) updated.saved = d.saved - parseInt(m1[1].replace(/\s/g, ''));
+      if (m2) updated.safetyFund = safetyFund - parseInt(m2[1].replace(/\s/g, ''));
+      if (m3) updated.salary = d.salary - parseInt(m3[1].replace(/\s/g, ''));
     }
-
     update(updated);
   };
 
-  // ─── UI ───────────────────────────────────────────────
   return (
     <div className="max-w-md mx-auto px-4 py-4 space-y-4">
-      <div className="text-sm text-[#848E9C]">
-        Привет, <span className="text-[#EAECEF] font-bold">{d.name}</span>!
-      </div>
+      <div className="text-sm text-[#848E9C]">Привет, <span className="text-[#EAECEF] font-bold">{d.name}</span>!</div>
 
       {/* Мечта */}
       <div className="bg-[#1E2329] rounded-2xl p-4 border border-[#2B3139]">
@@ -230,14 +184,11 @@ export default function Dashboard({ data, updateData }: Props) {
           </div>
         </div>
         <div className="w-full bg-[#2B3139] rounded-full h-2 mt-3">
-          <div className="bg-gradient-to-r from-[#F0B90B] to-[#F6465D] h-2 rounded-full transition-all duration-700"
-            style={{ width: `${Math.min(progressPercent, 100)}%` }} />
+          <div className="bg-gradient-to-r from-[#F0B90B] to-[#F6465D] h-2 rounded-full transition-all duration-700" style={{ width: `${Math.min(progressPercent, 100)}%` }} />
         </div>
         <div className="flex justify-between mt-2 text-xs text-[#848E9C]">
           <span>+{toGoal.toLocaleString('ru-RU')} ₽/мес</span>
-          {monthsDelayed > 0 && (
-            <span className="text-[#F6465D]">⚠ Мечта отложена на {monthsDelayed} мес.</span>
-          )}
+          {monthsDelayed > 0 && <span className="text-[#F6465D]">⚠ Мечта отложена на {monthsDelayed} мес.</span>}
         </div>
       </div>
 
@@ -245,9 +196,7 @@ export default function Dashboard({ data, updateData }: Props) {
       <div className="bg-[#1E2329] rounded-2xl p-4 border border-[#2B3139]">
         <div className="flex items-center justify-between">
           <div>
-            <div className="flex items-center gap-2 text-[#848E9C] text-xs uppercase tracking-wider">
-              <ShieldCheckIcon className="w-4 h-4" /> Подушка безопасности
-            </div>
+            <div className="flex items-center gap-2 text-[#848E9C] text-xs uppercase tracking-wider"><ShieldCheckIcon className="w-4 h-4" /> Подушка безопасности</div>
             <div className="flex items-baseline gap-2 mt-1">
               <span className="text-xl font-bold text-[#EAECEF]">{safetyFund.toLocaleString('ru-RU')} ₽</span>
               <span className="text-[#848E9C] text-sm">/ {SAFETY_GOAL.toLocaleString('ru-RU')} ₽</span>
@@ -259,8 +208,7 @@ export default function Dashboard({ data, updateData }: Props) {
           </div>
         </div>
         <div className="w-full bg-[#2B3139] rounded-full h-1.5 mt-3">
-          <div className="bg-[#0ECB81] h-1.5 rounded-full transition-all duration-700"
-            style={{ width: `${Math.min(safetyPercent, 100)}%` }} />
+          <div className="bg-[#0ECB81] h-1.5 rounded-full transition-all duration-700" style={{ width: `${Math.min(safetyPercent, 100)}%` }} />
         </div>
       </div>
 
@@ -302,9 +250,32 @@ export default function Dashboard({ data, updateData }: Props) {
         </div>
         {dailyLimit < 0 && (
           <div className="mt-3 bg-[#F6465D]/10 border border-[#F6465D]/30 rounded-lg px-3 py-2 text-xs text-[#F6465D] flex items-center gap-2">
-            <ExclamationTriangleIcon className="w-4 h-4 shrink-0" />
-            Бюджет исчерпан. Используй подушку или дождись зарплаты.
+            <ExclamationTriangleIcon className="w-4 h-4 shrink-0" /> Бюджет исчерпан. Используй подушку или дождись зарплаты.
           </div>
+        )}
+      </div>
+
+      {/* Уведомления */}
+      <div className="bg-[#1E2329] rounded-2xl p-4 border border-[#2B3139]">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <BellIcon className="w-5 h-5 text-[#848E9C]" />
+            <span className="text-sm text-[#EAECEF]">Ежедневное напоминание</span>
+          </div>
+          {permission === 'granted' ? (
+            scheduled ? (
+              <span className="text-xs text-[#0ECB81]">✓ Включено</span>
+            ) : (
+              <button onClick={() => scheduleDailyReminder(dailyLimit)} className="text-xs bg-[#F0B90B] text-black px-3 py-1.5 rounded-lg font-bold">Включить</button>
+            )
+          ) : (
+            <button onClick={requestPermission} className="text-xs bg-[#F0B90B] text-black px-3 py-1.5 rounded-lg font-bold">Разрешить уведомления</button>
+          )}
+        </div>
+        {permission === 'granted' && (
+          <button onClick={() => sendTestNotification(dailyLimit)} className="mt-2 text-xs text-[#848E9C] underline">
+            Отправить тестовое уведомление
+          </button>
         )}
       </div>
 
@@ -327,23 +298,13 @@ export default function Dashboard({ data, updateData }: Props) {
       {/* Форма форс-мажора */}
       {showForceMajeure && (
         <div className="bg-[#1E2329] rounded-2xl p-4 border border-[#F6465D]/50 space-y-3">
-          <div className="flex items-center gap-2 text-[#F6465D] text-sm font-bold">
-            <ExclamationTriangleIcon className="w-5 h-5" /> Форс-мажор
-          </div>
-          <input type="text" value={fmDesc} onChange={e => setFmDesc(e.target.value)}
-            placeholder="На что? (лечение, ремонт...)"
-            className="w-full bg-[#0B0E11] border border-[#2B3139] rounded-lg px-3 py-2 text-sm text-[#EAECEF] outline-none focus:border-[#F6465D] placeholder-[#848E9C]" />
-          <input type="number" value={fmAmount} onChange={e => setFmAmount(e.target.value)}
-            placeholder="Сумма"
-            className="w-full bg-[#0B0E11] border border-[#2B3139] rounded-lg px-3 py-2 text-sm text-[#EAECEF] outline-none focus:border-[#F6465D] placeholder-[#848E9C]" />
-          <p className="text-xs text-[#848E9C]">
-            Сначала из подушки ({safetyFund.toLocaleString('ru-RU')} ₽), затем из мечты ({d.saved.toLocaleString('ru-RU')} ₽).
-          </p>
+          <div className="flex items-center gap-2 text-[#F6465D] text-sm font-bold"><ExclamationTriangleIcon className="w-5 h-5" /> Форс-мажор</div>
+          <input type="text" value={fmDesc} onChange={e => setFmDesc(e.target.value)} placeholder="На что? (лечение, ремонт...)" className="w-full bg-[#0B0E11] border border-[#2B3139] rounded-lg px-3 py-2 text-sm text-[#EAECEF] outline-none focus:border-[#F6465D] placeholder-[#848E9C]" />
+          <input type="number" value={fmAmount} onChange={e => setFmAmount(e.target.value)} placeholder="Сумма" className="w-full bg-[#0B0E11] border border-[#2B3139] rounded-lg px-3 py-2 text-sm text-[#EAECEF] outline-none focus:border-[#F6465D] placeholder-[#848E9C]" />
+          <p className="text-xs text-[#848E9C]">Сначала из подушки ({safetyFund.toLocaleString('ru-RU')} ₽), затем из мечты ({d.saved.toLocaleString('ru-RU')} ₽).</p>
           <div className="flex gap-2">
-            <button onClick={() => setShowForceMajeure(false)}
-              className="flex-1 py-2 rounded-lg border border-[#2B3139] text-[#848E9C] text-sm">Отмена</button>
-            <button onClick={addForceMajeure} disabled={!fmDesc.trim() || !+fmAmount}
-              className="flex-1 py-2 rounded-lg bg-[#F6465D] text-black text-sm font-bold disabled:opacity-40">Списать</button>
+            <button onClick={() => setShowForceMajeure(false)} className="flex-1 py-2 rounded-lg border border-[#2B3139] text-[#848E9C] text-sm">Отмена</button>
+            <button onClick={addForceMajeure} disabled={!fmDesc.trim() || !+fmAmount} className="flex-1 py-2 rounded-lg bg-[#F6465D] text-black text-sm font-bold disabled:opacity-40">Списать</button>
           </div>
         </div>
       )}
@@ -351,40 +312,17 @@ export default function Dashboard({ data, updateData }: Props) {
       {/* Форма доп. дохода */}
       {showExtraIncome && (
         <div className="bg-[#1E2329] rounded-2xl p-4 border border-[#0ECB81]/50 space-y-3">
-          <div className="flex items-center gap-2 text-[#0ECB81] text-sm font-bold">
-            <PlusCircleIcon className="w-5 h-5" /> Дополнительный доход
-          </div>
-          <input type="text" value={eiDesc} onChange={e => setEiDesc(e.target.value)}
-            placeholder="Откуда? (премия, подработка...)"
-            className="w-full bg-[#0B0E11] border border-[#2B3139] rounded-lg px-3 py-2 text-sm text-[#EAECEF] outline-none focus:border-[#0ECB81] placeholder-[#848E9C]" />
-          <input type="number" value={eiAmount} onChange={e => setEiAmount(e.target.value)}
-            placeholder="Сумма"
-            className="w-full bg-[#0B0E11] border border-[#2B3139] rounded-lg px-3 py-2 text-sm text-[#EAECEF] outline-none focus:border-[#0ECB81] placeholder-[#848E9C]" />
+          <div className="flex items-center gap-2 text-[#0ECB81] text-sm font-bold"><PlusCircleIcon className="w-5 h-5" /> Дополнительный доход</div>
+          <input type="text" value={eiDesc} onChange={e => setEiDesc(e.target.value)} placeholder="Откуда? (премия, подработка...)" className="w-full bg-[#0B0E11] border border-[#2B3139] rounded-lg px-3 py-2 text-sm text-[#EAECEF] outline-none focus:border-[#0ECB81] placeholder-[#848E9C]" />
+          <input type="number" value={eiAmount} onChange={e => setEiAmount(e.target.value)} placeholder="Сумма" className="w-full bg-[#0B0E11] border border-[#2B3139] rounded-lg px-3 py-2 text-sm text-[#EAECEF] outline-none focus:border-[#0ECB81] placeholder-[#848E9C]" />
           <div className="space-y-1 text-xs text-[#848E9C]">
-            <div className="flex items-center gap-2">
-              <span className="w-20">Мечта</span>
-              <input type="range" min={0} max={100} value={eiDream} onChange={e => { setEiDream(+e.target.value); setEiSafety(Math.min(100 - +e.target.value, eiSafety)); setEiBudget(100 - +e.target.value - Math.min(100 - +e.target.value, eiSafety)); }}
-                className="flex-1 accent-[#F0B90B]" />
-              <span className="w-8 text-right">{eiDream}%</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-20">Подушка</span>
-              <input type="range" min={0} max={100 - eiDream} value={eiSafety} onChange={e => { setEiSafety(+e.target.value); setEiBudget(100 - eiDream - +e.target.value); }}
-                className="flex-1 accent-[#0ECB81]" />
-              <span className="w-8 text-right">{eiSafety}%</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-20">Бюджет</span>
-              <input type="range" min={0} max={100 - eiDream - eiSafety} value={eiBudget} readOnly
-                className="flex-1 accent-[#848E9C]" />
-              <span className="w-8 text-right">{eiBudget}%</span>
-            </div>
+            <div className="flex items-center gap-2"><span className="w-20">Мечта</span><input type="range" min={0} max={100} value={eiDream} onChange={e => { setEiDream(+e.target.value); setEiSafety(Math.min(100 - +e.target.value, eiSafety)); setEiBudget(100 - +e.target.value - Math.min(100 - +e.target.value, eiSafety)); }} className="flex-1 accent-[#F0B90B]" /><span className="w-8 text-right">{eiDream}%</span></div>
+            <div className="flex items-center gap-2"><span className="w-20">Подушка</span><input type="range" min={0} max={100 - eiDream} value={eiSafety} onChange={e => { setEiSafety(+e.target.value); setEiBudget(100 - eiDream - +e.target.value); }} className="flex-1 accent-[#0ECB81]" /><span className="w-8 text-right">{eiSafety}%</span></div>
+            <div className="flex items-center gap-2"><span className="w-20">Бюджет</span><input type="range" min={0} max={100 - eiDream - eiSafety} value={eiBudget} readOnly className="flex-1 accent-[#848E9C]" /><span className="w-8 text-right">{eiBudget}%</span></div>
           </div>
           <div className="flex gap-2">
-            <button onClick={() => setShowExtraIncome(false)}
-              className="flex-1 py-2 rounded-lg border border-[#2B3139] text-[#848E9C] text-sm">Отмена</button>
-            <button onClick={addExtraIncome} disabled={!eiDesc.trim() || !+eiAmount}
-              className="flex-1 py-2 rounded-lg bg-[#0ECB81] text-black text-sm font-bold disabled:opacity-40">Добавить</button>
+            <button onClick={() => setShowExtraIncome(false)} className="flex-1 py-2 rounded-lg border border-[#2B3139] text-[#848E9C] text-sm">Отмена</button>
+            <button onClick={addExtraIncome} disabled={!eiDesc.trim() || !+eiAmount} className="flex-1 py-2 rounded-lg bg-[#0ECB81] text-black text-sm font-bold disabled:opacity-40">Добавить</button>
           </div>
         </div>
       )}
@@ -404,18 +342,13 @@ export default function Dashboard({ data, updateData }: Props) {
               <div key={i} className="flex items-center justify-between bg-[#2B3139] rounded-lg px-3 py-2 group">
                 <span className="text-sm">{cat.icon} {cat.name}</span>
                 <div className="flex items-center gap-1">
-                  <input type="number" value={cat.amount} onChange={e => updateCategory(i, +e.target.value)}
-                    className="w-20 bg-transparent text-right text-sm text-[#EAECEF] outline-none border-b border-transparent focus:border-[#F0B90B] transition-colors" />
+                  <input type="number" value={cat.amount} onChange={e => updateCategory(i, +e.target.value)} className="w-20 bg-transparent text-right text-sm text-[#EAECEF] outline-none border-b border-transparent focus:border-[#F0B90B] transition-colors" />
                   <span className="text-[#848E9C] text-xs">₽</span>
-                  <button onClick={() => removeCategory(i)}
-                    className="text-[#848E9C] hover:text-[#F6465D] opacity-0 group-hover:opacity-100 transition-opacity ml-1">×</button>
+                  <button onClick={() => removeCategory(i)} className="text-[#848E9C] hover:text-[#F6465D] opacity-0 group-hover:opacity-100 transition-opacity ml-1">×</button>
                 </div>
               </div>
             ))}
-            <button onClick={addCategory}
-              className="w-full border border-dashed border-[#2B3139] rounded-lg py-2 text-[#848E9C] text-sm hover:border-[#F0B90B] hover:text-[#F0B90B] transition-colors">
-              + Добавить категорию
-            </button>
+            <button onClick={addCategory} className="w-full border border-dashed border-[#2B3139] rounded-lg py-2 text-[#848E9C] text-sm hover:border-[#F0B90B] hover:text-[#F0B90B] transition-colors">+ Добавить категорию</button>
           </div>
         )}
       </div>
@@ -423,23 +356,15 @@ export default function Dashboard({ data, updateData }: Props) {
       {/* История трат */}
       <div className="bg-[#1E2329] rounded-2xl border border-[#2B3139] overflow-hidden">
         <button onClick={() => setShowHistory(!showHistory)} className="w-full flex items-center justify-between p-4 text-left">
-          <div className="flex items-center gap-2">
-            <ClockIcon className="w-4 h-4 text-[#848E9C]" />
-            <span className="text-[#848E9C] text-xs uppercase tracking-wider">История операций</span>
-          </div>
+          <div className="flex items-center gap-2"><ClockIcon className="w-4 h-4 text-[#848E9C]" /><span className="text-[#848E9C] text-xs uppercase tracking-wider">История операций</span></div>
           <span className={`text-[#848E9C] transition-transform ${showHistory ? 'rotate-180' : ''}`}>▾</span>
         </button>
         {showHistory && (
           <div className="px-4 pb-4 space-y-2">
             <div className="flex gap-2">
-              <input type="text" value={newSpendingDesc} onChange={e => setNewSpendingDesc(e.target.value)}
-                placeholder="На что потратил?"
-                className="flex-1 bg-[#2B3139] rounded-lg px-3 py-2 text-sm text-[#EAECEF] outline-none focus:ring-1 focus:ring-[#F0B90B] placeholder-[#848E9C]" />
-              <input type="number" value={newSpendingAmount} onChange={e => setNewSpendingAmount(e.target.value)}
-                placeholder="Сумма"
-                className="w-24 bg-[#2B3139] rounded-lg px-3 py-2 text-sm text-[#EAECEF] outline-none focus:ring-1 focus:ring-[#F0B90B] placeholder-[#848E9C]" />
-              <button onClick={addSpending} disabled={!newSpendingDesc.trim() || !+newSpendingAmount}
-                className="bg-[#F0B90B] text-black rounded-lg px-3 py-2 font-bold text-sm disabled:opacity-40 active:scale-95 transition-all">+</button>
+              <input type="text" value={newSpendingDesc} onChange={e => setNewSpendingDesc(e.target.value)} placeholder="На что потратил?" className="flex-1 bg-[#2B3139] rounded-lg px-3 py-2 text-sm text-[#EAECEF] outline-none focus:ring-1 focus:ring-[#F0B90B] placeholder-[#848E9C]" />
+              <input type="number" value={newSpendingAmount} onChange={e => setNewSpendingAmount(e.target.value)} placeholder="Сумма" className="w-24 bg-[#2B3139] rounded-lg px-3 py-2 text-sm text-[#EAECEF] outline-none focus:ring-1 focus:ring-[#F0B90B] placeholder-[#848E9C]" />
+              <button onClick={addSpending} disabled={!newSpendingDesc.trim() || !+newSpendingAmount} className="bg-[#F0B90B] text-black rounded-lg px-3 py-2 font-bold text-sm disabled:opacity-40 active:scale-95 transition-all">+</button>
             </div>
             {periodSpendings.length === 0 ? (
               <div className="text-center text-[#848E9C] text-xs py-4">Операций пока нет</div>
@@ -448,8 +373,7 @@ export default function Dashboard({ data, updateData }: Props) {
                 {periodSpendings.sort((a, b) => b.date.localeCompare(a.date)).map(sp => (
                   <div key={sp.id} className={`flex items-center justify-between rounded-lg px-3 py-2 group ${
                     sp.category?.includes('форс-мажор') ? 'bg-[#F6465D]/10 border border-[#F6465D]/30' :
-                    sp.category === 'доп.доход' ? 'bg-[#0ECB81]/10 border border-[#0ECB81]/30' :
-                    'bg-[#2B3139]'
+                    sp.category === 'доп.доход' ? 'bg-[#0ECB81]/10 border border-[#0ECB81]/30' : 'bg-[#2B3139]'
                   }`}>
                     <div className="flex items-center gap-2 min-w-0">
                       <span className="text-xs text-[#848E9C] shrink-0">{formatDate(sp.date)}</span>
@@ -459,8 +383,7 @@ export default function Dashboard({ data, updateData }: Props) {
                       <span className={`text-sm font-mono ${sp.category === 'доп.доход' ? 'text-[#0ECB81]' : 'text-[#F6465D]'}`}>
                         {sp.category === 'доп.доход' ? '+' : '−'}{sp.amount.toLocaleString('ru-RU')} ₽
                       </span>
-                      <button onClick={() => removeSpending(sp.id)}
-                        className="text-[#848E9C] hover:text-[#EAECEF] opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => removeSpending(sp.id)} className="text-[#848E9C] hover:text-[#EAECEF] opacity-0 group-hover:opacity-100 transition-opacity">
                         <XMarkIcon className="w-3.5 h-3.5" />
                       </button>
                     </div>

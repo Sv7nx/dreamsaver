@@ -24,3 +24,10 @@ export default defineConfig({
     }),
   ],
 });
+
+VitePWA({
+  strategies: 'injectManifest',
+  srcDir: 'public',
+  filename: 'sw.js',
+  // ... остальное без изменений
+})
