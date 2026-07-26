@@ -55,3 +55,24 @@ body {
 .pulse-glow {
   animation: pulse-glow 2s infinite;
 }
+
+/* Полноэкранный режим и безопасные зоны */
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background-color: #0a0a0f;
+}
+
+#root {
+  height: 100%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+/* Убираем скроллбары */
+::-webkit-scrollbar {
+  display: none;
+}
